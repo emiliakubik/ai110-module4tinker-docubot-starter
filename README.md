@@ -1,3 +1,7 @@
+# Final reflection
+
+I think the biggest concepts a student needs to get out of this is understanding a RAG model and understanding the difference between each of the 3 models we work with here. Something that stood out to me during this assignment is I believe this one could be really easy for students to shortcut and rely too much on AI to complete this for them, rather than really immersing themselves in it and getting something out of it. I think that's where my role comes in, during breakouts, I need to be really vigilant to what they are discussing and making sure they are not having AI do all of the work for them. AI was really helpful in understanding the problem, but when it came to designing how it would work, it had to be a collaboration between me and the AI because the AI could not do everything without me leading it in the right direction. One way I would give a student guidance without giving them the answer is by encouraging them to explain to me what they do understand and then really breaking down the part they are confused on into more simpler terms through asking them follow up questions, rather than just explaining it to them straight up. 
+
 # DocuBot
 
 DocuBot is a small documentation assistant that helps answer developer questions about a codebase.  
