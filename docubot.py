@@ -50,7 +50,6 @@ class DocuBot:
 
     def build_index(self, documents):
         """
-        TODO (Phase 1):
         Build a tiny inverted index mapping lowercase words to the documents
         they appear in.
 
@@ -64,7 +63,19 @@ class DocuBot:
         ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+        
+        for filename, text in documents:
+            # Extract words: lowercase and split on whitespace
+            words = text.lower().split()
+            
+            # Add each unique word to the index
+            unique_words = set(words)
+            for word in unique_words:
+                if word not in index:
+                    index[word] = []
+                if filename not in index[word]:
+                    index[word].append(filename)
+        
         return index
 
     # -----------------------------------------------------------
@@ -73,7 +84,6 @@ class DocuBot:
 
     def score_document(self, query, text):
         """
-        TODO (Phase 1):
         Return a simple relevance score for how well the text matches the query.
 
         Suggested baseline:
@@ -81,18 +91,52 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        # Convert query to lowercase words
+        query_words = query.lower().split()
+        
+        # Convert text to lowercase for matching
+        text_lower = text.lower()
+        
+        # Count occurrences of each query word in the text
+        score = 0
+        for word in query_words:
+            score += text_lower.count(word)
+        
+        return score
 
     def retrieve(self, query, top_k=3):
         """
-        TODO (Phase 1):
         Use the index and scoring function to select top_k relevant document snippets.
 
         Return a list of (filename, text) sorted by score descending.
         """
-        results = []
-        # TODO: implement retrieval logic
+        # Get query words
+        query_words = query.lower().split()
+        
+        # Find candidate documents using the index
+        candidate_filenames = set()
+        for word in query_words:
+            if word in self.index:
+                candidate_filenames.update(self.index[word])
+        
+        # If no candidates found, fall back to scoring all documents
+        if not candidate_filenames:
+            candidate_filenames = {filename for filename, _ in self.documents}
+        
+        # Score each candidate document
+        scored_docs = []
+        for filename, text in self.documents:
+            if filename in candidate_filenames:
+                score = self.score_document(query, text)
+                if score > 0:  # Only include documents with non-zero scores
+                    scored_docs.append((score, filename, text))
+        
+        # Sort by score descending (highest first)
+        scored_docs.sort(reverse=True, key=lambda x: x[0])
+        
+        # Return top_k results as (filename, text) tuples
+        results = [(filename, text) for score, filename, text in scored_docs]
+        
         return results[:top_k]
 
     # -----------------------------------------------------------
