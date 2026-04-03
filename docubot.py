@@ -20,7 +20,7 @@ class DocuBot:
         self.llm_client = llm_client
 
         # Load documents into memory
-        self.documents = self.load_documents()  # List of (filename, text)
+        self.documents = self.load_documents()  # List of (chunk_id, text)
 
         # Build a retrieval index (implemented in Phase 1)
         self.index = self.build_index(self.documents)
@@ -29,20 +29,42 @@ class DocuBot:
     # Document Loading
     # -----------------------------------------------------------
 
+    def chunk_text(self, text):
+        """
+        Splits text into paragraphs (chunks separated by blank lines).
+        Returns a list of non-empty paragraph strings.
+        """
+        # Split on double newlines (paragraph breaks)
+        paragraphs = text.split("\n\n")
+        
+        # Filter out empty chunks and strip whitespace
+        chunks = [p.strip() for p in paragraphs if p.strip()]
+        
+        return chunks
+
     def load_documents(self):
         """
-        Loads all .md and .txt files inside docs_folder.
-        Returns a list of tuples: (filename, text)
+        Loads all .md and .txt files inside docs_folder and chunks them into paragraphs.
+        Returns a list of tuples: (chunk_id, chunk_text)
+        where chunk_id is "filename::para_0", "filename::para_1", etc.
         """
-        docs = []
+        chunks = []
         pattern = os.path.join(self.docs_folder, "*.*")
         for path in glob.glob(pattern):
             if path.endswith(".md") or path.endswith(".txt"):
                 with open(path, "r", encoding="utf8") as f:
                     text = f.read()
                 filename = os.path.basename(path)
-                docs.append((filename, text))
-        return docs
+                
+                # Split into paragraphs
+                paragraphs = self.chunk_text(text)
+                
+                # Create chunk entries with unique IDs
+                for idx, para in enumerate(paragraphs):
+                    chunk_id = f"{filename}::para_{idx}"
+                    chunks.append((chunk_id, para))
+        
+        return chunks
 
     # -----------------------------------------------------------
     # Index Construction (Phase 1)
@@ -50,13 +72,13 @@ class DocuBot:
 
     def build_index(self, documents):
         """
-        Build a tiny inverted index mapping lowercase words to the documents
+        Build a tiny inverted index mapping lowercase words to the chunks
         they appear in.
 
         Example structure:
         {
-            "token": ["AUTH.md", "API_REFERENCE.md"],
-            "database": ["DATABASE.md"]
+            "token": ["AUTH.md::para_0", "API_REFERENCE.md::para_2"],
+            "database": ["DATABASE.md::para_1"]
         }
 
         Keep this simple: split on whitespace, lowercase tokens,
@@ -64,7 +86,7 @@ class DocuBot:
         """
         index = {}
         
-        for filename, text in documents:
+        for chunk_id, text in documents:
             # Extract words: lowercase and split on whitespace
             words = text.lower().split()
             
@@ -73,8 +95,8 @@ class DocuBot:
             for word in unique_words:
                 if word not in index:
                     index[word] = []
-                if filename not in index[word]:
-                    index[word].append(filename)
+                if chunk_id not in index[word]:
+                    index[word].append(chunk_id)
         
         return index
 
@@ -88,54 +110,76 @@ class DocuBot:
 
         Suggested baseline:
         - Convert query into lowercase words
-        - Count how many appear in the text
+        - Filter out very short words (noise like single digits, articles)
+        - Count how many meaningful words appear in the text
         - Return the count as the score
         """
         # Convert query to lowercase words
         query_words = query.lower().split()
         
+        # Filter out very short words (single chars, digits, articles, etc.)
+        # Only keep words with 3+ characters to avoid noise
+        meaningful_words = [w for w in query_words if len(w) >= 3]
+        
+        # If no meaningful words remain, return 0 (prevents matching on noise)
+        if not meaningful_words:
+            return 0
+        
         # Convert text to lowercase for matching
         text_lower = text.lower()
         
-        # Count occurrences of each query word in the text
+        # Count occurrences of each meaningful query word in the text
         score = 0
-        for word in query_words:
+        for word in meaningful_words:
             score += text_lower.count(word)
         
         return score
 
-    def retrieve(self, query, top_k=3):
+    def retrieve(self, query, top_k=3, min_score=3):
         """
-        Use the index and scoring function to select top_k relevant document snippets.
+        Use the index and scoring function to select top_k relevant paragraph chunks.
 
-        Return a list of (filename, text) sorted by score descending.
+        Return a list of (chunk_id, text) sorted by score descending.
+        
+        Args:
+            query: The search query
+            top_k: Maximum number of results to return
+            min_score: Minimum score threshold - chunks scoring below this are filtered out.
+                       This acts as a guardrail to prevent answering with weak evidence.
+                       Default is 3 (at least 3 query word occurrences).
         """
-        # Get query words
+        # Get query words and filter out short/meaningless ones
         query_words = query.lower().split()
+        meaningful_words = [w for w in query_words if len(w) >= 3]
         
-        # Find candidate documents using the index
-        candidate_filenames = set()
-        for word in query_words:
+        # If no meaningful words, return empty (prevents noise matching)
+        if not meaningful_words:
+            return []
+        
+        # Find candidate chunks using the index
+        candidate_chunk_ids = set()
+        for word in meaningful_words:
             if word in self.index:
-                candidate_filenames.update(self.index[word])
+                candidate_chunk_ids.update(self.index[word])
         
-        # If no candidates found, fall back to scoring all documents
-        if not candidate_filenames:
-            candidate_filenames = {filename for filename, _ in self.documents}
+        # If no candidates found, fall back to scoring all chunks
+        if not candidate_chunk_ids:
+            candidate_chunk_ids = {chunk_id for chunk_id, _ in self.documents}
         
-        # Score each candidate document
-        scored_docs = []
-        for filename, text in self.documents:
-            if filename in candidate_filenames:
+        # Score each candidate chunk
+        scored_chunks = []
+        for chunk_id, text in self.documents:
+            if chunk_id in candidate_chunk_ids:
                 score = self.score_document(query, text)
-                if score > 0:  # Only include documents with non-zero scores
-                    scored_docs.append((score, filename, text))
+                # Only include chunks that meet the minimum score threshold
+                if score >= min_score:
+                    scored_chunks.append((score, chunk_id, text))
         
         # Sort by score descending (highest first)
-        scored_docs.sort(reverse=True, key=lambda x: x[0])
+        scored_chunks.sort(reverse=True, key=lambda x: x[0])
         
-        # Return top_k results as (filename, text) tuples
-        results = [(filename, text) for score, filename, text in scored_docs]
+        # Return top_k results as (chunk_id, text) tuples
+        results = [(chunk_id, text) for score, chunk_id, text in scored_chunks]
         
         return results[:top_k]
 
@@ -143,34 +187,44 @@ class DocuBot:
     # Answering Modes
     # -----------------------------------------------------------
 
-    def answer_retrieval_only(self, query, top_k=3):
+    def answer_retrieval_only(self, query, top_k=3, min_score=3):
         """
         Phase 1 retrieval only mode.
-        Returns raw snippets and filenames with no LLM involved.
+        Returns raw snippets and chunk identifiers with no LLM involved.
+        
+        Args:
+            query: The user's question
+            top_k: Number of chunks to retrieve
+            min_score: Minimum relevance score threshold (guardrail against weak evidence)
         """
-        snippets = self.retrieve(query, top_k=top_k)
+        snippets = self.retrieve(query, top_k=top_k, min_score=min_score)
 
         if not snippets:
             return "I do not know based on these docs."
 
         formatted = []
-        for filename, text in snippets:
-            formatted.append(f"[{filename}]\n{text}\n")
+        for chunk_id, text in snippets:
+            formatted.append(f"[{chunk_id}]\n{text}\n")
 
         return "\n---\n".join(formatted)
 
-    def answer_rag(self, query, top_k=3):
+    def answer_rag(self, query, top_k=3, min_score=3):
         """
         Phase 2 RAG mode.
         Uses student retrieval to select snippets, then asks Gemini
         to generate an answer using only those snippets.
+        
+        Args:
+            query: The user's question
+            top_k: Number of chunks to retrieve
+            min_score: Minimum relevance score threshold (guardrail against weak evidence)
         """
         if self.llm_client is None:
             raise RuntimeError(
                 "RAG mode requires an LLM client. Provide a GeminiClient instance."
             )
 
-        snippets = self.retrieve(query, top_k=top_k)
+        snippets = self.retrieve(query, top_k=top_k, min_score=min_score)
 
         if not snippets:
             return "I do not know based on these docs."
